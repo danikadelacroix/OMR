@@ -89,8 +89,12 @@ while True:
                     grading.append(1)
                 else:grading.append(0)
             #print("GRADING",grading)
-            score = (sum(grading)/questions)*100 # FINAL GRADE
-            #print("SCORE",score)
+            score = (sum(grading)/questions)*100 
+
+            from db_utils import store_result
+            
+            student_id = input("Enter student ID: ")
+            store_result(student_id, myIndex, ans, score)
 
             # DISPLAYING ANSWERS
             utlis.showAnswers(imgWarpColored,myIndex,grading,ans) # DRAW DETECTED ANSWERS
