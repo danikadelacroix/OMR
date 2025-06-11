@@ -1,142 +1,91 @@
 import cv2
 import numpy as np
-import utlis
+from utils import *
+from db_utils import init_db, store_result
 
-########################################################################
-webCamFeed = True
-pathImage = "3.jpg"
-cap = cv2.VideoCapture(1)
-cap.set(10,160)
-heightImg = 700
-widthImg  = 700
-questions=5
-choices=5
-ans= [1,2,0,2,4]
-########################################################################
+# === CONFIGURABLE SECTION ===
+QUESTIONS = 5
+CHOICES = 5
+CORRECT_ANSWERS = [1, 2, 0, 1, 4]  # Correct answer indices
 
+def main():
+    # Initialize DB
+    init_db()
 
-count=0
+    # Get student ID
+    student_id = input("Enter Student ID: ").strip()
+    if not student_id:
+        print("Student ID cannot be empty!")
+        return
 
-while True:
+    # Load and process image
+    pathImage = "1.jpg"
+    img = cv2.imread(pathImage)
+    img = cv2.resize(img, (700, 700))
+    imgContours = img.copy()
+    imgBiggestContours = img.copy()
 
-    if webCamFeed:success, img = cap.read()
-    else:img = cv2.imread(pathImage)
-    img = cv2.resize(img, (widthImg, heightImg)) # RESIZE IMAGE
-    imgFinal = img.copy()
-    imgBlank = np.zeros((heightImg,widthImg, 3), np.uint8) # CREATE A BLANK IMAGE FOR TESTING DEBUGGING IF REQUIRED
-    imgGray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) # CONVERT IMAGE TO GRAY SCALE
-    imgBlur = cv2.GaussianBlur(imgGray, (5, 5), 1) # ADD GAUSSIAN BLUR
-    imgCanny = cv2.Canny(imgBlur,10,70) # APPLY CANNY 
+    imgGray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    imgBlur = cv2.GaussianBlur(imgGray, (5, 5), 1)
+    imgCanny = cv2.Canny(imgBlur, 10, 50)
 
-    try:
-        ## FIND ALL COUNTOURS
-        imgContours = img.copy() # COPY IMAGE FOR DISPLAY PURPOSES
-        imgBigContour = img.copy() # COPY IMAGE FOR DISPLAY PURPOSES
-        contours, hierarchy = cv2.findContours(imgCanny, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE) # FIND ALL CONTOURS
-        cv2.drawContours(imgContours, contours, -1, (0, 255, 0), 10) # DRAW ALL DETECTED CONTOURS
-        rectCon = utlis.rectContour(contours) # FILTER FOR RECTANGLE CONTOURS
-        biggestPoints= utlis.getCornerPoints(rectCon[0]) # GET CORNER POINTS OF THE BIGGEST RECTANGLE
-        gradePoints = utlis.getCornerPoints(rectCon[1]) # GET CORNER POINTS OF THE SECOND BIGGEST RECTANGLE
+    # Find contours
+    contours, hierarchy = cv2.findContours(imgCanny, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    cv2.drawContours(imgContours, contours, -1, (0, 255, 0), 10)
 
-        
+    rectCon = rectContour(contours)
+    if len(rectCon) == 0:
+        print("No rectangle contours found.")
+        return
 
-        if biggestPoints.size != 0 and gradePoints.size != 0:
+    biggestContour = getCornerPoints(rectCon[0])
+    if biggestContour.size != 4:
+        print("Could not detect 4 corners.")
+        return
 
-            # BIGGEST RECTANGLE WARPING
-            biggestPoints=utlis.reorder(biggestPoints) # REORDER FOR WARPING
-            cv2.drawContours(imgBigContour, biggestPoints, -1, (0, 255, 0), 20) # DRAW THE BIGGEST CONTOUR
-            pts1 = np.float32(biggestPoints) # PREPARE POINTS FOR WARP
-            pts2 = np.float32([[0, 0],[widthImg, 0], [0, heightImg],[widthImg, heightImg]]) # PREPARE POINTS FOR WARP
-            matrix = cv2.getPerspectiveTransform(pts1, pts2) # GET TRANSFORMATION MATRIX
-            imgWarpColored = cv2.warpPerspective(img, matrix, (widthImg, heightImg)) # APPLY WARP PERSPECTIVE
+    biggestContour = reorder(biggestContour)
+    cv2.drawContours(imgBiggestContours, [biggestContour], -1, (0, 255, 0), 20)
 
-            # SECOND BIGGEST RECTANGLE WARPING
-            cv2.drawContours(imgBigContour, gradePoints, -1, (255, 0, 0), 20) # DRAW THE BIGGEST CONTOUR
-            gradePoints = utlis.reorder(gradePoints) # REORDER FOR WARPING
-            ptsG1 = np.float32(gradePoints)  # PREPARE POINTS FOR WARP
-            ptsG2 = np.float32([[0, 0], [325, 0], [0, 150], [325, 150]])  # PREPARE POINTS FOR WARP
-            matrixG = cv2.getPerspectiveTransform(ptsG1, ptsG2)# GET TRANSFORMATION MATRIX
-            imgGradeDisplay = cv2.warpPerspective(img, matrixG, (325, 150)) # APPLY WARP PERSPECTIVE
+    pts1 = np.float32(biggestContour)
+    pts2 = np.float32([[0, 0], [QUESTIONS * 100, 0], [0, CHOICES * 100], [QUESTIONS * 100, CHOICES * 100]])
+    matrix = cv2.getPerspectiveTransform(pts1, pts2)
+    imgWarpColored = cv2.warpPerspective(img, matrix, (QUESTIONS * 100, CHOICES * 100))
 
-            # APPLY THRESHOLD
-            imgWarpGray = cv2.cvtColor(imgWarpColored,cv2.COLOR_BGR2GRAY) # CONVERT TO GRAYSCALE
-            imgThresh = cv2.threshold(imgWarpGray, 170, 255,cv2.THRESH_BINARY_INV )[1] # APPLY THRESHOLD AND INVERSE
+    # Thresholding
+    imgWarpGray = cv2.cvtColor(imgWarpColored, cv2.COLOR_BGR2GRAY)
+    imgThresh = cv2.threshold(imgWarpGray, 150, 255, cv2.THRESH_BINARY_INV)[1]
 
-            boxes = utlis.splitBoxes(imgThresh) # GET INDIVIDUAL BOXES
-            cv2.imshow("Split Test ", boxes[3])
-            countR=0
-            countC=0
-            myPixelVal = np.zeros((questions,choices)) # TO STORE THE NON ZERO VALUES OF EACH BOX
-            for image in boxes:
-                #cv2.imshow(str(countR)+str(countC),image)
-                totalPixels = cv2.countNonZero(image)
-                myPixelVal[countR][countC]= totalPixels
-                countC += 1
-                if (countC==choices):countC=0;countR +=1
+    boxes = splitBoxes(imgThresh)
 
-            # FIND THE USER ANSWERS AND PUT THEM IN A LIST
-            myIndex=[]
-            for x in range (0,questions):
-                arr = myPixelVal[x]
-                myIndexVal = np.where(arr == np.amax(arr))
-                myIndex.append(myIndexVal[0][0])
-            #print("USER ANSWERS",myIndex)
+    # Count non-zero pixels in each box
+    pixelVal = np.zeros((QUESTIONS, CHOICES))
+    for i in range(QUESTIONS * CHOICES):
+        totalPixels = cv2.countNonZero(boxes[i])
+        row = i // CHOICES
+        col = i % CHOICES
+        pixelVal[row][col] = totalPixels
 
-            # COMPARE THE VALUES TO FIND THE CORRECT ANSWERS
-            grading=[]
-            for x in range(0,questions):
-                if ans[x] == myIndex[x]:
-                    grading.append(1)
-                else:grading.append(0)
-            #print("GRADING",grading)
-            score = (sum(grading)/questions)*100 
+    # Determine answers
+    myIndex = [np.argmax(row) for row in pixelVal]
 
-            from db_utils import store_result
-            
-            student_id = input("Enter student ID: ")
-            store_result(student_id, myIndex, ans, score)
+    # Grade answers
+    grading = [1 if myIndex[i] == CORRECT_ANSWERS[i] else 0 for i in range(QUESTIONS)]
+    score = grading.count(1) * (100 // QUESTIONS)
 
-            # DISPLAYING ANSWERS
-            utlis.showAnswers(imgWarpColored,myIndex,grading,ans) # DRAW DETECTED ANSWERS
-            utlis.drawGrid(imgWarpColored) # DRAW GRID
-            imgRawDrawings = np.zeros_like(imgWarpColored) # NEW BLANK IMAGE WITH WARP IMAGE SIZE
-            utlis.showAnswers(imgRawDrawings, myIndex, grading, ans) # DRAW ON NEW IMAGE
-            invMatrix = cv2.getPerspectiveTransform(pts2, pts1) # INVERSE TRANSFORMATION MATRIX
-            imgInvWarp = cv2.warpPerspective(imgRawDrawings, invMatrix, (widthImg, heightImg)) # INV IMAGE WARP
+    print(f"Answers marked: {myIndex}")
+    print(f"Score: {score}%")
 
-            # DISPLAY GRADE
-            imgRawGrade = np.zeros_like(imgGradeDisplay,np.uint8) # NEW BLANK IMAGE WITH GRADE AREA SIZE
-            cv2.putText(imgRawGrade,str(int(score))+"%",(70,100)
-                        ,cv2.FONT_HERSHEY_COMPLEX,3,(0,255,255),3) # ADD THE GRADE TO NEW IMAGE
-            invMatrixG = cv2.getPerspectiveTransform(ptsG2, ptsG1) # INVERSE TRANSFORMATION MATRIX
-            imgInvGradeDisplay = cv2.warpPerspective(imgRawGrade, invMatrixG, (widthImg, heightImg)) # INV IMAGE WARP
+    # Store in DB
+    store_result(student_id, myIndex, CORRECT_ANSWERS, score)
 
-            # SHOW ANSWERS AND GRADE ON FINAL IMAGE
-            imgFinal = cv2.addWeighted(imgFinal, 1, imgInvWarp, 1,0)
-            imgFinal = cv2.addWeighted(imgFinal, 1, imgInvGradeDisplay, 1,0)
+    # Show result image
+    imgResult = imgWarpColored.copy()
+    imgResult = showAnswers(imgResult, myIndex, grading, CORRECT_ANSWERS, QUESTIONS, CHOICES)
+    imgResult = drawGrid(imgResult, QUESTIONS, CHOICES)
 
-            # IMAGE ARRAY FOR DISPLAY
-            imageArray = ([img,imgGray,imgCanny,imgContours],
-                          [imgBigContour,imgThresh,imgWarpColored,imgFinal])
-            cv2.imshow("Final Result", imgFinal)
-    except:
-        imageArray = ([img,imgGray,imgCanny,imgContours],
-                      [imgBlank, imgBlank, imgBlank, imgBlank])
+    cv2.imshow("OMR Result", imgResult)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
-    # LABELS FOR DISPLAY
-    lables = [["Original","Gray","Edges","Contours"],
-              ["Biggest Contour","Threshold","Warpped","Final"]]
-
-    stackedImage = utlis.stackImages(imageArray,0.5,lables)
-    cv2.imshow("Result",stackedImage)
-
-    # SAVE IMAGE WHEN 's' key is pressed
-    if cv2.waitKey(1) & 0xFF == ord('s'):
-        cv2.imwrite("Scanned/myImage"+str(count)+".jpg",imgFinal)
-        cv2.rectangle(stackedImage, ((int(stackedImage.shape[1] / 2) - 230), int(stackedImage.shape[0] / 2) + 50),
-                      (1100, 350), (0, 255, 0), cv2.FILLED)
-        cv2.putText(stackedImage, "Scan Saved", (int(stackedImage.shape[1] / 2) - 200, int(stackedImage.shape[0] / 2)),
-                    cv2.FONT_HERSHEY_DUPLEX, 3, (0, 0, 255), 5, cv2.LINE_AA)
-        cv2.imshow('Result', stackedImage)
-        cv2.waitKey(300)
-        count += 1
+if __name__ == "__main__":
+    main()
